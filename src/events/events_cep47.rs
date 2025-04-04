@@ -1,11 +1,9 @@
-use borsh::{BorshDeserialize, BorshSerialize};
-use casper_macros::CasperABI;
-use casper_sdk::{casper::Entity, types::Address};
+use casper_sdk::{casper::Entity, prelude::*, types::Address};
 
 use crate::types::TokenIdentifier;
 
-#[derive(BorshSerialize, BorshDeserialize, CasperABI, Debug, Clone, PartialEq)]
-#[borsh(use_discriminant = true)]
+#[casper]
+#[derive(Debug, Clone, PartialEq)]
 pub enum CEP47Event {
     Mint {
         recipient: Address,

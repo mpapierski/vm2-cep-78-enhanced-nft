@@ -12,10 +12,8 @@ use crate::{
     types::*,
 };
 use blake2b_simd::blake2b;
-use casper_macros::*;
-use casper_sdk::*;
 use casper::Entity;
-use types::*;
+use casper_sdk::{prelude::*, types::Address};
 
 #[casper(contract_state)]
 pub struct NFTContract {
@@ -56,6 +54,7 @@ impl Default for NFTContract {
 
 #[casper(contract)]
 impl NFTContract {
+    #[allow(clippy::too_many_arguments)]
     #[casper(constructor)]
     pub fn new(
         collection_name: String,
@@ -198,17 +197,13 @@ impl NFTContract {
         let caller = casper::get_caller();
 
         // Revert if minting is private and caller is not installer.
-        if MintingMode::Installer == self.state.minting_mode {
-            if self.state.installer != caller {
-                return Err(NFTCoreError::InvalidMinter);
-            }
+        if MintingMode::Installer == self.state.minting_mode && self.state.installer != caller {
+            return Err(NFTCoreError::InvalidMinter);
         }
 
         // Revert if minting is acl and caller is not whitelisted.
-        if MintingMode::Acl == self.state.minting_mode {
-            if !self.is_whitelisted(caller) {
-                return Err(NFTCoreError::InvalidMinter);
-            }
+        if MintingMode::Acl == self.state.minting_mode && !self.is_whitelisted(caller) {
+            return Err(NFTCoreError::InvalidMinter);
         }
 
         let token_identifier = match self.state.identifier_mode {
@@ -244,9 +239,7 @@ impl NFTContract {
 
         // Update the forward and reverse trackers
         if NFTIdentifierMode::Hash == self.state.identifier_mode {
-            if let Err(e) = self.insert_hash_id_lookups(&token_identifier) {
-                return Err(e);
-            }
+            self.insert_hash_id_lookups(&token_identifier)?;
         }
 
         // Increment the count of owned tokens.
@@ -393,9 +386,7 @@ impl NFTContract {
             return Err(NFTCoreError::InvalidAccount);
         }
 
-        if let Err(e) = self.set_approved(&token_identifier, spender) {
-            return Err(e);
-        }
+        self.set_approved(&token_identifier, spender)?;
 
         // Emit Approval event.
         let owner = Self::unwrap_entity(owner);
@@ -452,9 +443,7 @@ impl NFTContract {
             return Err(NFTCoreError::PreviouslyBurntToken);
         }
 
-        if let Err(e) = self.clear_approved(&token_identifier) {
-            return Err(e);
-        }
+        self.clear_approved(&token_identifier)?;
 
         let owner = Self::unwrap_entity(owner);
         match self.state.events_mode {
@@ -668,11 +657,11 @@ impl NFTContract {
             }
         }
 
-        return false;
+        false
     }
 
     fn set_operator_for_owner(&mut self, owner: Entity, operator: Entity, value: bool) {
-        if value == false {
+        if !value {
             self.state.store.operators.retain(|entry| {
                 let owned = entry.key == owner;
                 let is_operator = entry.value == operator;
@@ -803,17 +792,19 @@ impl NFTContract {
     }
 
     fn insert_token_issuer(&mut self, token_identifier: &TokenIdentifier, issuer: Entity) {
-        if let Some(mut data) = self.state.store.data.get(&token_identifier) {
+        if let Some(mut data) = self.state.store.data.get(token_identifier) {
             data.issuer = Some(issuer);
         } else {
-            let mut data = TokenData::default();
-            data.issuer = Some(issuer);
-            self.state.store.data.insert(&token_identifier, &data);
+            let data = TokenData {
+                issuer: Some(issuer),
+                ..Default::default()
+            };
+            self.state.store.data.insert(token_identifier, &data);
         }
     }
 
     fn read_token_owner(&self, token_identifier: &TokenIdentifier) -> Option<Entity> {
-        if let Some(data) = self.state.store.data.get(&token_identifier) {
+        if let Some(data) = self.state.store.data.get(token_identifier) {
             data.owner
         } else {
             None
@@ -821,12 +812,17 @@ impl NFTContract {
     }
 
     fn insert_token_owner(&mut self, token_identifier: &TokenIdentifier, owner: Entity) {
-        if let Some(mut data) = self.state.store.data.get(&token_identifier) {
+        if let Some(mut data) = self.state.store.data.get(token_identifier) {
             data.owner = Some(owner);
         } else {
-            let mut data = TokenData::default();
+            let mut data = TokenData {
+                owner: Some(owner),
+                approved: None,
+                issuer: None,
+                metadata: String::new(),
+            };
             data.owner = Some(owner);
-            self.state.store.data.insert(&token_identifier, &data);
+            self.state.store.data.insert(token_identifier, &data);
         }
     }
 
@@ -890,7 +886,7 @@ impl NFTContract {
 
                 for (property_name, property_type) in token_schema.properties.iter() {
                     if property_type.required
-                        && custom_metadata.attributes.get(property_name).is_none()
+                        && !custom_metadata.attributes.contains_key(property_name)
                     {
                         return Err(NFTCoreError::InvalidCustomMetadata);
                     }
@@ -967,7 +963,7 @@ impl NFTContract {
 
                 serde_json_wasm::from_str::<CustomMetadataSchema>(custom_schema_json)
                     .map_err(|_| NFTCoreError::InvalidJsonSchema)
-                    .unwrap_or_revert()
+                    .unwrap()
             }
         }
     }
